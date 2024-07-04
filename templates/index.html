@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Website Monitoring Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .status-up {
+            color: green;
+        }
+        .status-down {
+            color: red;
+        }
+        .update-form {
+            display: none;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Website Monitoring Dashboard</h1>
+    <table id="sitesTable">
+        <thead>
+            <tr>
+                <th>URL</th>
+                <th>Last Checked</th>
+                <th>Status</th>
+                <th>Uptime</th>
+                <th>Check Interval (seconds)</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Table rows will be dynamically populated -->
+        </tbody>
+    </table>
+    <h2>Add New Site</h2>
+    <form id="addSiteForm">
+        <label for="url">URL:</label>
+        <input type="text" id="url" name="url" required><br><br>
+        
+        <label for="type">Type:</label>
+        <select id="type" name="type" required>
+            <option value="http">HTTP(S) Monitor</option>
+            <option value="ping">Ping Monitor</option>
+        </select><br><br>
+
+        <label for="checkInterval">Check Interval (seconds):</label>
+        <input type="number" id="checkInterval" name="check_interval" value="10" required><br><br>
+
+        <button type="submit">Add Site</button>
+    </form>
+
+    <!-- Form for updating site type and check interval -->
+    <div id="updateForm" class="update-form">
+        <h2>Update Site</h2>
+        <form id="updateSiteForm">
+            <label for="updateType">Type:</label>
+            <select id="updateType" name="type" required>
+                <option value="http">HTTP(S) Monitor</option>
+                <option value="ping">Ping Monitor</option>
+            </select><br><br>
+
+            <label for="updateCheckInterval">Check Interval (seconds):</label>
+            <input type="number" id="updateCheckInterval" name="check_interval" value="10" required><br><br>
+
+            <button type="submit">Update</button>
+            <button type="button" onclick="cancelUpdate()">Cancel</button>
+        </form>
+    </div>
+
+    <script>
+        // Function to load and display site data
+        function loadSites() {
+            fetch('/sites')
+                .then(response => response.json())
+                .then(data => {
+                    const sitesTable = document.getElementById('sitesTable').querySelector('tbody');
+                    sitesTable.innerHTML = ''; // Clearing current table content
+
+                    data.forEach(site => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${site.url}</td>
+                            <td>${site.last_checked ? site.last_checked : 'Not checked yet'}</td>
+                            <td>
+                                <span class="status ${site.status ? 'status-up' : 'status-down'}">
+                                    ${site.status === null ? 'Checking...' : (site.status ? 'Up' : 'Down')}
+                                </span>
+                            </td>
+                            <td>${site.uptime ? site.uptime.toFixed(2) + ' seconds' : 'N/A'}</td>
+                            <td>${site.check_interval}</td>
+                            <td>
+                                <button onclick="deleteSite('${site.url}')">Delete</button>
+                                <button onclick="showUpdateForm('${site.url}', '${site.type}', ${site.check_interval})">Update</button>
+                            </td>
+                        `;
+                        sitesTable.appendChild(row);
+                    });
+                })
+                .catch(error => console.error('Error fetching sites:', error));
+        }
+
+        // Function to delete a site
+        function deleteSite(url) {
+            if (confirm(`Are you sure you want to delete ${url}?`)) {
+                fetch(`/sites/${encodeURIComponent(url)}`, {
+                    method: 'DELETE'
+                })
+                .then(response => {
+                    if (response.ok) {
+                        alert('Site deleted successfully');
+                        loadSites(); // Refresh table after deleting site
+                    } else {
+                        throw new Error('Failed to delete site');
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            }
+        }
+
+        // Function to show update form for a site
+        function showUpdateForm(url, type, checkInterval) {
+            const updateForm = document.getElementById('updateForm');
+            const updateType = updateForm.querySelector('#updateType');
+            const updateCheckInterval = updateForm.querySelector('#updateCheckInterval');
+
+            updateType.value = type;
+            updateCheckInterval.value = checkInterval;
+            updateForm.style.display = 'block';
+
+            // Submit handler for update form
+            updateForm.querySelector('form').addEventListener('submit', function(event) {
+                event.preventDefault();
+                const formData = new FormData(this);
+                fetch(`/sites/${encodeURIComponent(url)}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(Object.fromEntries(formData.entries()))
+                })
+                .then(response => {
+                    if (response.ok) {
+                        alert('Site updated successfully');
+                        updateForm.style.display = 'none';
+                        loadSites(); // Refresh table after updating site
+                    } else {
+                        throw new Error('Failed to update site');
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            });
+        }
+
+        // Function to cancel update
+        function cancelUpdate() {
+            const updateForm = document.getElementById('updateForm');
+            updateForm.style.display = 'none';
+        }
+
+        // Load site data on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSites();
+            setInterval(loadSites, 10000); // Refresh every 10 seconds
+        });
+
+        // Form submit handler for adding a new site
+        document.getElementById('addSiteForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const formData = new FormData(this);
+            fetch('/sites', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(Object.fromEntries(formData.entries()))
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                loadSites(); // Refresh table after adding site
+            })
+            .catch(error => console.error('Error:', error));
+        });
+    </script>
+</body>
+</html>

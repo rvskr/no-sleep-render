@@ -1,62 +1,125 @@
-from flask import Flask
-import os
-from dotenv import load_dotenv
-import schedule
+from flask import Flask, render_template, request, jsonify
+import requests
 import time
-import random
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
+import subprocess
 
 app = Flask(__name__)
 
-# Загрузка переменных окружения из файла .env
-load_dotenv()
+# Структура данных для хранения информации о сайтах
+sites_info = [
+    {"type": "http", "url": "https://exel-to-gsheets.onrender.com/", "status": None, "last_checked": None, "uptime": 0, "check_interval": 10},
+    {"type": "http", "url": "https://your-service-name-v8vp.onrender.com", "status": None, "last_checked": None, "uptime": 0, "check_interval": 10},
+    {"type": "http", "url": "https://text-chat.onrender.com", "status": None, "last_checked": None, "uptime": 0, "check_interval": 10}
+]
 
-# Считываем список URL сайтов из переменной окружения
-site_urls_str = os.getenv('SITE_URLS')
-if site_urls_str:
-    site_urls = [url.strip() for url in site_urls_str.split(',')]
-    print(f'Loaded SITE_URLS: {site_urls}')
-else:
-    print('Variable SITE_URLS is not set or empty. Please check your environment setup.')
-    exit()
-
-# Функция для имитации доступа пользователя к сайту
-def try_access_website(url):
+def check_http_site(url):
     try:
-        # Используем Selenium для имитации открытия браузера и загрузки страницы
-        options = webdriver.ChromeOptions()
-        options.add_argument('headless')  # Запуск браузера в фоновом режиме (без GUI)
-        driver = webdriver.Chrome(options=options)
-        driver.get(url)
-        print(f'Successfully tried to access {url}')
-    except Exception as e:
-        print(f'Error trying to access {url}: {str(e)}')
-    finally:
-        if driver:
-            driver.quit()
+        start_time = time.time()
+        response = requests.get(url, timeout=10)
+        end_time = time.time()
+        response_time = end_time - start_time
 
-# Функция для имитации доступа к сайтам в списке
-def schedule_access():
-    for url in site_urls:
-        try_access_website(url)
-    
-    # Задаем случайный интервал в секундах от 60 до 180 (1 минута до 3 минут)
-    random_interval = random.randint(10, 100)
-    print(f'Next access attempt in {random_interval} seconds')
+        if response.status_code == 200:
+            return True, response_time
+        else:
+            return False, response_time
+    except requests.exceptions.RequestException:
+        return False, None
 
-    # Запускаем расписание для следующей попытки доступа через случайное время
-    schedule.every(random_interval).seconds.do(schedule_access)
+def check_ping_site(url):
+    try:
+        start_time = time.time()
+        result = subprocess.run(['ping', '-c', '1', url], capture_output=True, text=True, timeout=10)
+        end_time = time.time()
+        response_time = end_time - start_time
+
+        if result.returncode == 0:
+            return True, response_time
+        else:
+            return False, response_time
+    except subprocess.TimeoutExpired:
+        return False, None
+    except subprocess.CalledProcessError:
+        return False, None
+
+def update_sites_status():
+    for site in sites_info:
+        if site["type"] == "http":
+            status, response_time = check_http_site(site["url"])
+        elif site["type"] == "ping":
+            status, response_time = check_ping_site(site["url"])
+        else:
+            status, response_time = False, None
+        
+        site["status"] = status
+        site["last_checked"] = time.strftime('%Y-%m-%d %H:%M:%S')
+        if status:
+            site["uptime"] += response_time if response_time else 0
+        else:
+            site["uptime"] = 0
 
 @app.route('/')
 def index():
-    return 'Hello, World!'
+    return render_template('index.html', sites=sites_info)
+
+@app.route('/monitoring')
+def monitoring():
+    return render_template('index.html', sites=sites_info)
+
+@app.route('/sites', methods=['GET'])
+def get_sites():
+    return jsonify(sites_info)
+
+@app.route('/sites', methods=['POST'])
+def add_site():
+    data = request.get_json()
+    new_url = data.get('url')
+    new_type = data.get('type')
+    check_interval = int(data.get('check_interval', 10))  # По умолчанию проверка каждые 10 секунд
+
+    if new_url and new_type and not any(site["url"] == new_url for site in sites_info):
+        sites_info.append({
+            "type": new_type,
+            "url": new_url,
+            "status": None,
+            "last_checked": None,
+            "uptime": 0,
+            "check_interval": check_interval
+        })
+        return jsonify({'message': 'Site added successfully'}), 201
+    else:
+        return jsonify({'error': 'Site already exists or invalid URL or type'}), 400
+
+@app.route('/sites/<path:url>', methods=['DELETE'])
+def delete_site(url):
+    for site in sites_info:
+        if site["url"] == url:
+            sites_info.remove(site)
+            return jsonify({'message': 'Site deleted successfully'}), 200
+    return jsonify({'error': 'Site not found'}), 404
+
+@app.route('/sites/<path:url>', methods=['PUT'])
+def update_site(url):
+    data = request.get_json()
+    new_type = data.get('type')
+    check_interval = int(data.get('check_interval', 10))
+
+    for site in sites_info:
+        if site["url"] == url:
+            site["type"] = new_type if new_type else site["type"]
+            site["check_interval"] = check_interval
+            return jsonify({'message': 'Site updated successfully'}), 200
+    return jsonify({'error': 'Site not found'}), 404
 
 if __name__ == '__main__':
-    # Начальная имитация доступа к сайтам
-    schedule_access()
+    # Запуск потока для периодической проверки сайтов
+    def monitor_sites():
+        while True:
+            update_sites_status()
+            time.sleep(10)  # Проверка каждые 10 секунд
 
-    # Бесконечный цикл для выполнения расписания
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+    import threading
+    monitor_thread = threading.Thread(target=monitor_sites)
+    monitor_thread.start()
+
+    app.run(debug=True)
