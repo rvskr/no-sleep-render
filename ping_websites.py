@@ -2,6 +2,9 @@ from flask import Flask
 import os
 import requests
 from dotenv import load_dotenv
+import schedule
+import time
+import random
 
 app = Flask(__name__)
 
@@ -17,6 +20,7 @@ else:
     print('Variable SITE_URLS is not set or empty. Please check your environment setup.')
     exit()
 
+# Функция для выполнения пинга
 def ping_website(url):
     try:
         response = requests.get(url)
@@ -27,13 +31,27 @@ def ping_website(url):
     except Exception as e:
         print(f'Error pinging {url}: {str(e)}')
 
+# Функция для выполнения пинга для всех сайтов в списке
+def schedule_ping():
+    for url in site_urls:
+        ping_website(url)
+    
+    # Задаем случайный интервал в минутах от 1 до 3
+    random_interval = random.randint(1, 3)
+    print(f'Next ping in {random_interval} minutes')
+
+    # Запускаем расписание для следующего пинга через случайное время
+    schedule.every(random_interval).minutes.do(schedule_ping)
+
 @app.route('/')
 def index():
     return 'Hello, World!'
 
-def schedule_ping():
-    for url in site_urls:
-        ping_website(url)
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    # Начальный запуск пинга
+    schedule_ping()
+
+    # Бесконечный цикл для выполнения расписания
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
