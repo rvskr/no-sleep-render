@@ -1,8 +1,9 @@
+from flask import Flask
 import os
 import requests
 from dotenv import load_dotenv
-import schedule
-import time
+
+app = Flask(__name__)
 
 # Загрузка переменных окружения из файла .env
 load_dotenv()
@@ -26,14 +27,13 @@ def ping_website(url):
     except Exception as e:
         print(f'Error pinging {url}: {str(e)}')
 
+@app.route('/')
+def index():
+    return 'Hello, World!'
+
 def schedule_ping():
     for url in site_urls:
         ping_website(url)
 
-# Назначаем задачу пинга каждые 3 минуты
-schedule.every(1).minutes.do(schedule_ping)
-
 if __name__ == '__main__':
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+    app.run(host='0.0.0.0', port=5000)
