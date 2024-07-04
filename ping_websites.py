@@ -112,8 +112,6 @@ def update_site(url):
     return jsonify({'error': 'Site not found'}), 404
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)  # Замените 8080 на порт, который нужно использовать
-
     def monitor_sites():
         while True:
             update_sites_status()
@@ -123,4 +121,4 @@ if __name__ == '__main__':
     monitor_thread = threading.Thread(target=monitor_sites)
     monitor_thread.start()
 
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=True)  # Замените 8080 на порт, который нужно использовать
