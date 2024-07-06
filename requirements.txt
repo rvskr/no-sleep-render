@@ -3,3 +3,5 @@ python-dotenv
 schedule
 Flask
 selenium
+flask_sqlalchemy
+--upgrade pip
