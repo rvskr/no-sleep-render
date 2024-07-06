@@ -149,4 +149,4 @@ if __name__ == '__main__':
     monitor_thread = threading.Thread(target=monitor_sites)
     monitor_thread.start()
 
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=True)
