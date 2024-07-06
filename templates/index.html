@@ -100,14 +100,14 @@
                     data.forEach(site => {
                         const row = document.createElement('tr');
                         row.innerHTML = `
-                            <td>${site.url}</td>
+                            <td><a href="${site.url}" target="_blank">${site.url}</a></td>
                             <td>${site.last_checked ? site.last_checked : 'Not checked yet'}</td>
                             <td>
                                 <span class="status ${site.status === null ? 'status-up' : (site.status ? 'status-up' : 'status-down')}">
                                     ${site.status === null ? 'Checking...' : (site.status ? 'Up' : 'Down')}
                                 </span>
                             </td>
-                            <td>${site.uptime ? site.uptime.toFixed(2) + ' seconds' : 'N/A'}</td>
+                            <td>${site.uptime ? site.uptime.toFixed(2) + ' min' : 'N/A'}</td>
                             <td>${site.check_interval}</td>
                             <td>
                                 <button onclick="deleteSite('${site.url}')">Delete</button>
