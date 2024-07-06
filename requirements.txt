@@ -4,4 +4,3 @@ schedule
 Flask
 selenium
 flask_sqlalchemy
---upgrade pip
