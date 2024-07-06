@@ -1,16 +1,24 @@
 from flask import Flask, render_template, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
 import requests
-import time
 import subprocess
+import threading
+import time
+from datetime import datetime
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///sites.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # Disable modification tracking
+db = SQLAlchemy(app)
 
-# Структура данных для хранения информации о сайтах
-sites_info = [
-    {"type": "http", "url": "https://exel-to-gsheets.onrender.com/", "status": None, "last_checked": None, "uptime": 0, "check_interval": 10},
-    {"type": "http", "url": "https://your-service-name-v8vp.onrender.com", "status": None, "last_checked": None, "uptime": 0, "check_interval": 10},
-    {"type": "http", "url": "https://text-chat.onrender.com", "status": None, "last_checked": None, "uptime": 0, "check_interval": 10}
-]
+class Site(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    type = db.Column(db.String(10), nullable=False)
+    url = db.Column(db.String(200), nullable=False, unique=True)
+    status = db.Column(db.Boolean)
+    last_checked = db.Column(db.DateTime)
+    uptime = db.Column(db.Float)
+    check_interval = db.Column(db.Integer, default=10)
 
 def check_http_site(url):
     try:
@@ -43,60 +51,79 @@ def check_ping_site(url):
         return False, None
 
 def update_sites_status():
-    for site in sites_info:
-        if site["type"] == "http":
-            status, response_time = check_http_site(site["url"])
-        elif site["type"] == "ping":
-            status, response_time = check_ping_site(site["url"])
-        else:
-            status, response_time = False, None
-        
-        site["status"] = status
-        site["last_checked"] = time.strftime('%Y-%m-%d %H:%M:%S')
-        if status:
-            site["uptime"] += response_time if response_time else 0
-        else:
-            site["uptime"] = 0
+    with app.app_context():
+        sites = Site.query.all()
+
+        for site in sites:
+            if site.type == "http":
+                status, response_time = check_http_site(site.url)
+            elif site.type == "ping":
+                status, response_time = check_ping_site(site.url)
+            else:
+                status, response_time = False, None
+            
+            site.status = status
+            site.last_checked = datetime.utcnow()
+            if status:
+                site.uptime += response_time if response_time else 0
+            else:
+                site.uptime = 0
+
+        db.session.commit()
 
 @app.route('/')
 def index():
-    return render_template('index.html', sites=sites_info)
+    sites = Site.query.all()
+    return render_template('index.html', sites=sites)
 
 @app.route('/monitoring')
 def monitoring():
-    return render_template('index.html', sites=sites_info)
+    sites = Site.query.all()
+    return render_template('index.html', sites=sites)
 
 @app.route('/sites', methods=['GET'])
 def get_sites():
-    return jsonify(sites_info)
+    sites = Site.query.all()
+    serialized_sites = []
+    
+    for site in sites:
+        serialized_site = {
+            'id': site.id,
+            'url': site.url,
+            'type': site.type,
+            'status': site.status,
+            'last_checked': site.last_checked.strftime('%Y-%m-%d %H:%M:%S') if site.last_checked else None,
+            'uptime': float(site.uptime),
+            'check_interval': site.check_interval
+        }
+        serialized_sites.append(serialized_site)
+    
+    return jsonify(serialized_sites)
 
 @app.route('/sites', methods=['POST'])
 def add_site():
     data = request.get_json()
     new_url = data.get('url')
     new_type = data.get('type')
-    check_interval = int(data.get('check_interval', 10))  # По умолчанию проверка каждые 10 секунд
+    check_interval = int(data.get('check_interval', 10))  # Default check interval 10 seconds
 
-    if new_url and new_type and not any(site["url"] == new_url for site in sites_info):
-        sites_info.append({
-            "type": new_type,
-            "url": new_url,
-            "status": None,
-            "last_checked": None,
-            "uptime": 0,
-            "check_interval": check_interval
-        })
+    if new_url and new_type and not Site.query.filter_by(url=new_url).first():
+        new_site = Site(type=new_type, url=new_url, status=None, last_checked=None, uptime=0, check_interval=check_interval)
+        db.session.add(new_site)
+        db.session.commit()
         return jsonify({'message': 'Site added successfully'}), 201
     else:
         return jsonify({'error': 'Site already exists or invalid URL or type'}), 400
 
 @app.route('/sites/<path:url>', methods=['DELETE'])
 def delete_site(url):
-    for site in sites_info:
-        if site["url"] == url:
-            sites_info.remove(site)
-            return jsonify({'message': 'Site deleted successfully'}), 200
-    return jsonify({'error': 'Site not found'}), 404
+    site = Site.query.filter_by(url=url).first()
+    if site:
+        db.session.delete(site)
+        db.session.commit()
+        return jsonify({'message': 'Site deleted successfully'}), 200
+    else:
+        return jsonify({'error': 'Site not found'}), 404
 
 @app.route('/sites/<path:url>', methods=['PUT'])
 def update_site(url):
@@ -104,21 +131,22 @@ def update_site(url):
     new_type = data.get('type')
     check_interval = int(data.get('check_interval', 10))
 
-    for site in sites_info:
-        if site["url"] == url:
-            site["type"] = new_type if new_type else site["type"]
-            site["check_interval"] = check_interval
-            return jsonify({'message': 'Site updated successfully'}), 200
-    return jsonify({'error': 'Site not found'}), 404
+    site = Site.query.filter_by(url=url).first()
+    if site:
+        site.type = new_type if new_type else site.type
+        site.check_interval = check_interval
+        db.session.commit()
+        return jsonify({'message': 'Site updated successfully'}), 200
+    else:
+        return jsonify({'error': 'Site not found'}), 404
 
 if __name__ == '__main__':
     def monitor_sites():
         while True:
             update_sites_status()
-            time.sleep(10)  # Проверка каждые 10 секунд
+            time.sleep(10)  # Check every 10 seconds
 
-    import threading
     monitor_thread = threading.Thread(target=monitor_sites)
     monitor_thread.start()
 
-    app.run(host='0.0.0.0', port=8080, debug=True)  # Замените 8080 на порт, который нужно использовать
+    app.run(host='0.0.0.0', port=8080, debug=True)
