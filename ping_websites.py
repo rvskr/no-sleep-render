@@ -1,152 +1,94 @@
-from flask import Flask, render_template, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
 import requests
-import subprocess
 import threading
 import time
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
+from flask import Flask, render_template, request, redirect, url_for
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///sites.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # Disable modification tracking
-db = SQLAlchemy(app)
 
-class Site(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(10), nullable=False)
-    url = db.Column(db.String(200), nullable=False, unique=True)
-    status = db.Column(db.Boolean)
-    last_checked = db.Column(db.DateTime)
-    uptime = db.Column(db.Float)
-    check_interval = db.Column(db.Integer, default=10)
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Глобальные переменные для хранения статуса сайта
+site_status = {}
+site_last_checked = {}
+monitor_threads = {}
+monitor_intervals = {}
+monitor_flags = {}
+
+# Функция для проверки статуса сайта
 def check_http_site(url):
     try:
-        start_time = time.time()
         response = requests.get(url, timeout=10)
-        end_time = time.time()
-        response_time = end_time - start_time
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Ошибка при проверке {url}: {e}")
+        return False
 
-        if response.status_code == 200:
-            return True, response_time
-        else:
-            return False, response_time
-    except requests.exceptions.RequestException:
-        return False, None
+# Функция мониторинга сайта
+def monitor_site(url, interval, flag):
+    global site_status, site_last_checked
+    while not flag.is_set():
+        status = check_http_site(url)
+        site_status[url] = 'UP' if status else 'DOWN'
+        site_last_checked[url] = datetime.now(timezone.utc)
+        logging.info(f"Статус сайта {url}: {'UP' if status else 'DOWN'}")
+        logging.info(f"Следующая проверка сайта {url} через {interval} секунд.")
+        flag.wait(interval)
 
-def check_ping_site(url):
-    try:
-        start_time = time.time()
-        result = subprocess.run(['ping', '-c', '1', url], capture_output=True, text=True, timeout=10)
-        end_time = time.time()
-        response_time = end_time - start_time
-
-        if result.returncode == 0:
-            return True, response_time
-        else:
-            return False, response_time
-    except subprocess.TimeoutExpired:
-        return False, None
-    except subprocess.CalledProcessError:
-        return False, None
-
-def update_sites_status():
-    with app.app_context():
-        sites = Site.query.all()
-
-        for site in sites:
-            if site.type == "http":
-                status, response_time = check_http_site(site.url)
-            elif site.type == "ping":
-                status, response_time = check_ping_site(site.url)
-            else:
-                status, response_time = False, None
-            
-            site.status = status
-            site.last_checked = datetime.utcnow()
-            if status:
-                site.uptime += response_time if response_time else 0
-            else:
-                site.uptime = 0
-
-        db.session.commit()
-
-@app.route('/')
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    sites = Site.query.all()
+    if request.method == 'POST':
+        url = request.form['url']
+        interval = int(request.form['interval'])
+
+        # Запуск мониторинга в отдельном потоке для каждого сайта
+        if url not in monitor_threads or not monitor_threads[url].is_alive():
+            flag = threading.Event()
+            thread = threading.Thread(target=monitor_site, args=(url, interval, flag))
+            monitor_threads[url] = thread
+            monitor_intervals[url] = interval
+            monitor_flags[url] = flag
+            thread.start()
+            logging.info(f"Запущен мониторинг сайта {url} с интервалом {interval} секунд.")
+        else:
+            logging.info(f"Сайт {url} уже отслеживается.")
+
+        return redirect(url_for('index'))
+
+    # Список сайтов для отображения на странице
+    sites = [{'url': url, 'status': site_status.get(url, 'UNKNOWN'), 'last_checked': site_last_checked.get(url, 'Never'), 'interval': monitor_intervals.get(url, 'N/A')} for url in monitor_threads.keys()]
     return render_template('index.html', sites=sites)
 
-@app.route('/monitoring')
-def monitoring():
-    sites = Site.query.all()
-    return render_template('index.html', sites=sites)
+@app.route('/delete', methods=['POST'])
+def delete_site():
+    url = request.form['url']
+    if url in monitor_threads:
+        monitor_flags[url].set()  # Установить флаг для завершения потока
+        monitor_threads[url].join()  # Дождаться завершения потока
+        del monitor_threads[url]
+        del site_status[url]
+        del site_last_checked[url]
+        del monitor_intervals[url]
+        del monitor_flags[url]
+        logging.info(f"Мониторинг сайта {url} остановлен и сайт удален.")
+    return redirect(url_for('index'))
 
-@app.route('/sites', methods=['GET'])
-def get_sites():
-    sites = Site.query.all()
-    serialized_sites = []
-    
-    for site in sites:
-        serialized_site = {
-            'id': site.id,
-            'url': site.url,
-            'type': site.type,
-            'status': site.status,
-            'last_checked': site.last_checked.strftime('%Y-%m-%d %H:%M:%S') if site.last_checked else None,
-            'uptime': float(site.uptime),
-            'check_interval': site.check_interval
-        }
-        serialized_sites.append(serialized_site)
-    
-    return jsonify(serialized_sites)
-
-@app.route('/sites', methods=['POST'])
-def add_site():
-    data = request.get_json()
-    new_url = data.get('url')
-    new_type = data.get('type')
-    check_interval = int(data.get('check_interval', 10))  # Default check interval 10 seconds
-
-    if new_url and new_type and not Site.query.filter_by(url=new_url).first():
-        new_site = Site(type=new_type, url=new_url, status=None, last_checked=None, uptime=0, check_interval=check_interval)
-        db.session.add(new_site)
-        db.session.commit()
-        return jsonify({'message': 'Site added successfully'}), 201
-    else:
-        return jsonify({'error': 'Site already exists or invalid URL or type'}), 400
-
-@app.route('/sites/<path:url>', methods=['DELETE'])
-def delete_site(url):
-    site = Site.query.filter_by(url=url).first()
-    if site:
-        db.session.delete(site)
-        db.session.commit()
-        return jsonify({'message': 'Site deleted successfully'}), 200
-    else:
-        return jsonify({'error': 'Site not found'}), 404
-
-@app.route('/sites/<path:url>', methods=['PUT'])
-def update_site(url):
-    data = request.get_json()
-    new_type = data.get('type')
-    check_interval = int(data.get('check_interval', 10))
-
-    site = Site.query.filter_by(url=url).first()
-    if site:
-        site.type = new_type if new_type else site.type
-        site.check_interval = check_interval
-        db.session.commit()
-        return jsonify({'message': 'Site updated successfully'}), 200
-    else:
-        return jsonify({'error': 'Site not found'}), 404
+@app.route('/update', methods=['POST'])
+def update_site():
+    url = request.form['url']
+    interval = int(request.form['interval'])
+    if url in monitor_threads:
+        monitor_flags[url].set()  # Установить флаг для завершения текущего потока
+        monitor_threads[url].join()  # Дождаться завершения текущего потока
+        monitor_flags[url] = threading.Event()  # Создать новый флаг для нового потока
+        thread = threading.Thread(target=monitor_site, args=(url, interval, monitor_flags[url]))
+        monitor_threads[url] = thread
+        monitor_intervals[url] = interval
+        thread.start()
+        logging.info(f"Интервал мониторинга сайта {url} обновлен до {interval} секунд.")
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    def monitor_sites():
-        while True:
-            update_sites_status()
-            time.sleep(10)  # Check every 10 seconds
-
-    monitor_thread = threading.Thread(target=monitor_sites)
-    monitor_thread.start()
-
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(debug=True)

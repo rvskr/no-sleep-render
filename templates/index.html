@@ -2,189 +2,87 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Website Monitoring Dashboard</title>
+    <title>Мониторинг сайтов</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            margin: 20px;
+            margin: 40px;
+        }
+        h1, h2 {
+            text-align: center;
+        }
+        form {
+            margin-bottom: 20px;
+            text-align: center;
         }
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
+            margin: 20px 0;
         }
         table, th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
+            border: 1px solid black;
+        }
+        th, td {
+            padding: 10px;
+            text-align: center;
         }
         th {
             background-color: #f2f2f2;
         }
-        .status-up {
-            color: green;
+        .actions {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
         }
-        .status-down {
-            color: red;
-        }
-        .update-form {
-            display: none;
-            border: 1px solid #ccc;
-            padding: 10px;
-            margin-top: 10px;
+        .actions form {
+            display: inline;
         }
     </style>
 </head>
 <body>
-    <h1>Website Monitoring Dashboard</h1>
-    <table id="sitesTable">
+    <h1>Мониторинг сайтов</h1>
+    <form method="POST">
+        <label for="url">URL сайта:</label>
+        <input type="text" id="url" name="url" required>
+        <label for="interval">Интервал проверки (в секундах):</label>
+        <input type="number" id="interval" name="interval" required>
+        <button type="submit">Добавить сайт</button>
+    </form>
+    <h2>Отслеживаемые сайты</h2>
+    <table>
         <thead>
             <tr>
                 <th>URL</th>
-                <th>Last Checked</th>
-                <th>Status</th>
-                <th>Uptime</th>
-                <th>Check Interval (seconds)</th>
-                <th>Actions</th>
+                <th>Статус</th>
+                <th>Последняя проверка</th>
+                <th>Интервал (с)</th>
+                <th>Действия</th>
             </tr>
         </thead>
         <tbody>
-            <!-- Table rows will be dynamically populated -->
+            {% for site in sites %}
+            <tr>
+                <td>{{ site.url }}</td>
+                <td>{{ site.status }}</td>
+                <td>{{ site.last_checked }}</td>
+                <td>{{ site.interval }}</td>
+                <td>
+                    <div class="actions">
+                        <form method="POST" action="/delete">
+                            <input type="hidden" name="url" value="{{ site.url }}">
+                            <button type="submit">Удалить</button>
+                        </form>
+                        <form method="POST" action="/update">
+                            <input type="hidden" name="url" value="{{ site.url }}">
+                            <input type="number" name="interval" placeholder="Новый интервал" required>
+                            <button type="submit">Обновить</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
         </tbody>
     </table>
-    <h2>Add New Site</h2>
-    <form id="addSiteForm">
-        <label for="url">URL:</label>
-        <input type="text" id="url" name="url" required><br><br>
-        
-        <label for="type">Type:</label>
-        <select id="type" name="type" required>
-            <option value="http">HTTP(S) Monitor</option>
-            <option value="ping">Ping Monitor</option>
-        </select><br><br>
-
-        <label for="checkInterval">Check Interval (seconds):</label>
-        <input type="number" id="checkInterval" name="check_interval" value="10" required><br><br>
-
-        <button type="submit">Add Site</button>
-    </form>
-
-    <!-- Form for updating site type and check interval -->
-    <div id="updateForm" class="update-form">
-        <h2>Update Site</h2>
-        <form id="updateSiteForm">
-            <label for="updateType">Type:</label>
-            <select id="updateType" name="type" required>
-                <option value="http">HTTP(S) Monitor</option>
-                <option value="ping">Ping Monitor</option>
-            </select><br><br>
-
-            <label for="updateCheckInterval">Check Interval (seconds):</label>
-            <input type="number" id="updateCheckInterval" name="check_interval" value="10" required><br><br>
-
-            <button type="submit">Update</button>
-            <button type="button" onclick="cancelUpdate()">Cancel</button>
-        </form>
-    </div>
-
-    <script>
-        // Function to load and display site data
-        function loadSites() {
-            fetch('/sites')
-                .then(response => response.json())
-                .then(data => {
-                    const sitesTable = document.getElementById('sitesTable').querySelector('tbody');
-                    sitesTable.innerHTML = ''; // Clearing current table content
-
-                    data.forEach(site => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td><a href="${site.url}" target="_blank">${site.url}</a></td>
-                            <td>${site.last_checked ? site.last_checked : 'Not checked yet'}</td>
-                            <td>
-                                <span class="status ${site.status === null ? 'status-up' : (site.status ? 'status-up' : 'status-down')}">
-                                    ${site.status === null ? 'Checking...' : (site.status ? 'Up' : 'Down')}
-                                </span>
-                            </td>
-                            <td>${site.uptime ? site.uptime.toFixed(2) + ' min' : 'N/A'}</td>
-                            <td>${site.check_interval}</td>
-                            <td>
-                                <button onclick="deleteSite('${site.url}')">Delete</button>
-                                <button onclick="showUpdateForm('${site.url}', '${site.type}', ${site.check_interval})">Update</button>
-                            </td>
-                        `;
-                        sitesTable.appendChild(row);
-                    });
-                });
-        }
-
-        // Function to add a new site
-        document.getElementById('addSiteForm').addEventListener('submit', function(event) {
-            event.preventDefault();
-            const formData = new FormData(this);
-            fetch('/sites', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(Object.fromEntries(formData))
-            })
-            .then(response => {
-                if (response.ok) {
-                    loadSites();
-                    this.reset();
-                }
-            });
-        });
-
-        // Function to delete a site
-        function deleteSite(url) {
-            fetch(`/sites/${encodeURIComponent(url)}`, {
-                method: 'DELETE'
-            })
-            .then(response => {
-                if (response.ok) {
-                    loadSites();
-                }
-            });
-        }
-
-        // Function to show the update form with pre-filled data
-        function showUpdateForm(url, type, checkInterval) {
-            document.getElementById('updateForm').style.display = 'block';
-            document.getElementById('updateType').value = type;
-            document.getElementById('updateCheckInterval').value = checkInterval;
-            document.getElementById('updateForm').onsubmit = function(event) {
-                event.preventDefault();
-                const formData = {
-                    type: document.getElementById('updateType').value,
-                    check_interval: document.getElementById('updateCheckInterval').value
-                };
-                fetch(`/sites/${encodeURIComponent(url)}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(formData)
-                })
-                .then(response => {
-                    if (response.ok) {
-                        loadSites();
-                        document.getElementById('updateForm').style.display = 'none';
-                    }
-                });
-            };
-        }
-
-        // Function to cancel update and hide the update form
-        function cancelUpdate() {
-            document.getElementById('updateForm').style.display = 'none';
-        }
-
-        // Initial load of sites
-        loadSites();
-        setInterval(loadSites, 10000);  // Refreshing site data every 10 seconds
-    </script>
 </body>
 </html>
