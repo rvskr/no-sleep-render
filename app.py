@@ -73,22 +73,16 @@ def handle_post():
     log_function_call(handle_post)
     url = request.form['url']
     interval = int(request.form['interval'])
-    enabled = 'enabled' in request.form
+    enabled = 'enabled' in request.form  # Проверка состояния чекбокса
 
     if 'authenticated' not in session:
         flash('Пожалуйста, введите пароль для выполнения этой операции.', 'error')
         return redirect(url_for('login'))
 
-    data = {"url": url, "interval": interval}
+    data = {"url": url, "interval": interval, "enabled": enabled}  # Добавляем enabled в данные
     supabase.table('sites').insert(data).execute()
 
     if enabled:
-        if url in monitor_threads and monitor_threads[url].is_alive():
-            monitor_flags[url].set()  # Останавливаем текущий поток
-            monitor_threads[url].join()  # Ждём завершения
-            del monitor_threads[url]  # Удаляем старый поток
-            del monitor_flags[url]  # Удаляем старый флаг
-
         flag = threading.Event()
         thread = threading.Thread(target=monitor_site, args=(url, flag))
         monitor_threads[url] = thread
@@ -97,6 +91,7 @@ def handle_post():
         logging.info(f"Запущен мониторинг сайта {url} с интервалом {interval} секунд.")
 
     return redirect(url_for('index'))
+
 
 def render_index():
     log_function_call(render_index)
@@ -205,4 +200,15 @@ def fetch_statuses():
         return jsonify(success=False, message=str(e)), 500
 
 if __name__ == '__main__':
+    # Проверяем, есть ли сайты с включенным мониторингом
+    sites = supabase.table('sites').select('url', 'interval', 'enabled').execute().data
+    for site in sites:
+        if site['enabled']:
+            flag = threading.Event()
+            thread = threading.Thread(target=monitor_site, args=(site['url'], flag))
+            monitor_threads[site['url']] = thread
+            monitor_flags[site['url']] = flag
+            thread.start()
+            logging.info(f"Запущен мониторинг сайта {site['url']} с интервалом {site['interval']} секунд.")
+    
     app.run(debug=False)
