@@ -220,7 +220,7 @@ def login():
             flash('Неверный пароль!', 'error')
     return render_template('login.html')
 
-@app.route('/logout')
+@app.route('/logout', methods=['POST'])
 def logout():
     session.pop('authenticated', None)
     flash('Вы вышли из системы.', 'success')
