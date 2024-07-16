@@ -5,48 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Мониторинг сайтов</title>
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <script src="{{ url_for('static', filename='script.js') }}" defer></script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f9f9f9;
-            margin: 0;
-            padding: 20px;
-        }
-
-        h1 {
-            color: #333;
-        }
-
-        table {
-            width: 100%;
-            margin-top: 20px;
-            border-collapse: collapse;
-        }
-
-        th, td {
-            padding: 10px;
-            text-align: left;
-            border: 1px solid #ddd;
-        }
-
-        th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-        }
-
-        .btn-danger, .btn-warning {
-            margin-left: 5px;
-        }
-
-        .alert {
-            margin-bottom: 20px;
-        }
-    </style>
 </head>
 <body>
     <div class="container mt-5">
-        <h1>Мониторинг сайтов</h1>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>Мониторинг сайтов</h1>
+            <form method="post" action="{{ url_for('logout') }}">
+                <button type="submit" class="btn btn-secondary">Выйти</button>
+            </form>
+        </div>
         {% with messages = get_flashed_messages() %}
             {% if messages %}
                 <div class="alert alert-info">
@@ -57,10 +26,31 @@
             {% endif %}
         {% endwith %}
         
-        <button class="btn btn-primary mb-4" data-toggle="modal" data-target="#addSiteModal">Добавить сайт</button>
+        <button class="btn btn-primary mb-4" onclick="showAddSiteModal()">Добавить сайт</button>
+
+        <div id="addSiteModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="hideAddSiteModal()">&times;</span>
+                <form method="post">
+                    <div class="form-group">
+                        <label for="url">URL:</label>
+                        <input type="text" class="form-control" id="url" name="url" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="interval">Интервал (секунды):</label>
+                        <input type="number" class="form-control" id="interval" name="interval" required>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="enabled" name="enabled">
+                        <label class="form-check-label" for="enabled">Включить мониторинг</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Добавить сайт</button>
+                </form>
+            </div>
+        </div>
 
         <h2>Список сайтов</h2>
-        <table class="table table-bordered">
+        <table class="table">
             <thead>
                 <tr>
                     <th>URL</th>
@@ -91,43 +81,5 @@
             </tbody>
         </table>
     </div>
-
-    <!-- Модальное окно для добавления сайта -->
-    <div class="modal fade" id="addSiteModal" tabindex="-1" role="dialog" aria-labelledby="addSiteModalLabel" aria-hidden="true">
-        <div class="modal-dialog" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="addSiteModalLabel">Добавить сайт</h5>
-                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                </div>
-                <form method="post" action="{{ url_for('index') }}">
-                    <div class="modal-body">
-                        <div class="form-group">
-                            <label for="modal-url">URL:</label>
-                            <input type="text" class="form-control" id="modal-url" name="url" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="modal-interval">Интервал (секунды):</label>
-                            <input type="number" class="form-control" id="modal-interval" name="interval" required>
-                        </div>
-                        <div class="form-check">
-                            <input type="checkbox" class="form-check-input" id="modal-enabled" name="enabled">
-                            <label class="form-check-label" for="modal-enabled">Включить мониторинг</label>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Закрыть</button>
-                        <button type="submit" class="btn btn-primary">Добавить сайт</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 </body>
 </html>

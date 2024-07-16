@@ -138,6 +138,7 @@ def delete_site():
 
     return redirect(url_for('index'))
 
+
 def update_site_in_db(url, new_interval=None, enabled=None):
     update_data = {}
     if new_interval is not None:
@@ -177,6 +178,32 @@ def update_site():
                 del monitor_flags[url]
 
         app.logger.info(f"Обновлены данные для {url}: интервал {new_interval}, мониторинг {'включен' if enabled else 'отключен'}.")
+        return jsonify(success=True)
+
+    return jsonify(success=False, message="Некорректные данные."), 400
+
+@app.route('/toggle_monitoring', methods=['POST'])
+def toggle_monitoring():
+    data = request.json
+    url = data.get('url')
+    enabled = data.get('enabled')
+
+    if url:
+        update_site_in_db(url, enabled=enabled)
+        if enabled:
+            if url not in monitor_threads or not monitor_threads[url].is_alive():
+                flag = threading.Event()
+                thread = threading.Thread(target=monitor_site, args=(url, flag))
+                monitor_threads[url] = thread
+                monitor_flags[url] = flag
+                thread.start()
+        else:
+            if url in monitor_threads and monitor_threads[url].is_alive():
+                monitor_flags[url].set()
+                monitor_threads[url].join()
+                del monitor_threads[url]
+                del monitor_flags[url]
+
         return jsonify(success=True)
 
     return jsonify(success=False, message="Некорректные данные."), 400

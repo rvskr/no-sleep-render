@@ -2,48 +2,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const intervalCells = document.querySelectorAll('.interval-cell');
 
     intervalCells.forEach(cell => {
-        cell.addEventListener('blur', () => {
-            updateInterval(cell);
+        cell.addEventListener('blur', function () {
+            const url = this.getAttribute('data-url');
+            const newInterval = this.textContent;
+
+            if (!isNaN(newInterval) && newInterval > 0) {
+                updateInterval(url, newInterval);
+            } else {
+                alert('Интервал должен быть числом больше нуля.');
+                this.textContent = this.getAttribute('data-interval');
+            }
         });
 
-        cell.addEventListener('keypress', (event) => {
-            if (event.key === 'Enter') {
-                event.preventDefault(); // Предотвращаем добавление новой строки
-                updateInterval(cell);
-                cell.blur(); // Убираем фокус
+        cell.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.blur();
             }
         });
     });
 });
 
-function updateInterval(cell) {
-    const newInterval = cell.textContent.trim();
-    const url = cell.dataset.url;
-
-    if (!isNaN(newInterval) && newInterval > 0) {
-        fetch('/update', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                url: url,
-                interval: parseInt(newInterval, 10)
-            })
-        }).then(response => response.json()).then(data => {
-            if (data.success) {
-                location.reload(); // Перезагрузить страницу для обновления статусов
-            } else {
-                alert(data.message);
-            }
-        });
-    } else {
-        alert('Некорректный интервал. Пожалуйста, введите положительное число.');
-        cell.textContent = cell.dataset.interval; // Возвращаем старое значение
-    }
-}
-
-function toggleMonitoring(url, enabled) {
+function updateInterval(url, newInterval) {
     fetch('/update', {
         method: 'POST',
         headers: {
@@ -51,13 +31,39 @@ function toggleMonitoring(url, enabled) {
         },
         body: JSON.stringify({
             url: url,
-            enabled: !enabled
+            interval: newInterval,
+            enabled: true
         })
-    }).then(response => response.json()).then(data => {
-        if (data.success) {
-            location.reload(); // Перезагрузить страницу для обновления статусов
-        } else {
-            alert(data.message);
+    }).then(response => {
+        if (!response.ok) {
+            alert('Ошибка обновления интервала.');
         }
     });
+}
+
+function toggleMonitoring(url, currentState) {
+    fetch('/toggle_monitoring', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            url: url,
+            enabled: !currentState
+        })
+    }).then(response => {
+        if (response.ok) {
+            location.reload();
+        } else {
+            alert('Ошибка изменения состояния мониторинга.');
+        }
+    });
+}
+
+function showAddSiteModal() {
+    document.getElementById('addSiteModal').style.display = 'block';
+}
+
+function hideAddSiteModal() {
+    document.getElementById('addSiteModal').style.display = 'none';
 }
