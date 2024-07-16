@@ -68,11 +68,9 @@
                         <td>{{ site.last_checked }}</td>
                         <td class="interval-cell" data-url="{{ site.url }}" contenteditable="true">{{ site.interval }}</td>
                         <td>
-                            <form method="post" action="{{ url_for('delete_site') }}" class="d-inline">
-                                <input type="hidden" name="url" value="{{ site.url }}">
-                                <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
-                            </form>
-                            <button class="btn btn-warning btn-sm" onclick="toggleMonitoring('{{ site.url }}', {{ site.enabled | tojson }})">
+                            <button class="btn btn-danger btn-sm" onclick="deleteSite('{{ site.url }}')">Удалить</button>
+                            <button class="btn btn-warning btn-sm" data-enabled="{{ site.enabled }}"
+                                    onclick="toggleMonitoring('{{ site.url }}', {{ site.enabled | tojson }})">
                                 {{ 'Отключить' if site.enabled else 'Включить' }}
                             </button>
                         </td>
@@ -81,5 +79,26 @@
             </tbody>
         </table>
     </div>
+
+    <script>
+        function deleteSite(url) {
+            fetch('/delete_site', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: url }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();  // Обновление страницы для обновления списка сайтов
+                } else {
+                    alert(data.message);
+                }
+            })
+            .catch(error => console.error('Ошибка:', error));
+        }
+    </script>
 </body>
 </html>

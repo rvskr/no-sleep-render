@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateInterval(url, newInterval);
             } else {
                 alert('Интервал должен быть числом больше нуля.');
-                this.textContent = this.getAttribute('data-interval');
+                this.textContent = this.getAttribute('data-interval');  // Вернуть старое значение
             }
         });
 
@@ -32,32 +32,38 @@ function updateInterval(url, newInterval) {
         body: JSON.stringify({
             url: url,
             interval: newInterval,
-            enabled: true
-        })
-    }).then(response => {
-        if (!response.ok) {
-            alert('Ошибка обновления интервала.');
-        }
-    });
-}
-
-function toggleMonitoring(url, currentState) {
-    fetch('/toggle_monitoring', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            url: url,
-            enabled: !currentState
         })
     }).then(response => {
         if (response.ok) {
-            location.reload();
+            const cell = document.querySelector(`.interval-cell[data-url="${url}"]`);
+            if (cell) {
+                cell.setAttribute('data-interval', newInterval);
+            }
         } else {
-            alert('Ошибка изменения состояния мониторинга.');
+            alert('Ошибка обновления интервала.');
         }
+    }).catch(error => {
+        console.error('Ошибка:', error);
     });
+}
+
+function toggleMonitoring(url, isEnabled) {
+    fetch('/update', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: url, enabled: !isEnabled }),  // Переключаем статус
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();  // Обновление страницы для обновления статуса сайтов
+        } else {
+            alert(data.message);
+        }
+    })
+    .catch(error => console.error('Ошибка:', error));
 }
 
 function showAddSiteModal() {
@@ -66,4 +72,23 @@ function showAddSiteModal() {
 
 function hideAddSiteModal() {
     document.getElementById('addSiteModal').style.display = 'none';
+}
+
+function deleteSite(url) {
+    fetch('/delete_site', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: url }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();  // Обновление страницы для обновления списка сайтов
+        } else {
+            alert(data.message);
+        }
+    })
+    .catch(error => console.error('Ошибка:', error));
 }
