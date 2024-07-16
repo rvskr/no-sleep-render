@@ -2,3 +2,8 @@
 .env
 instance/sites.db
 /__pycache__
+/node_modules
+session_name.session
+session_name.session-journal
+package-lock.json
+python/app.py
