@@ -96,9 +96,11 @@ def handle_post():
 def render_index():
     log_function_call(render_index)
     sites = supabase.table('sites').select('*').execute().data
-    site_details = [{'url': site['url'], 'status': site_status.get(site['url'], 'UNKNOWN'),
+    site_details = [{'url': site['url'],
+                     'status': site_status.get(site['url'], 'NOT MONITORED'),
                      'last_checked': site_last_checked.get(site['url'], 'Never'),
-                     'interval': site['interval'], 'enabled': site['enabled']} for site in sites]
+                     'interval': site['interval'],
+                     'enabled': site['enabled']} for site in sites]
     return render_template('index.html', sites=site_details)
 
 @app.route('/update', methods=['POST'])
@@ -130,12 +132,15 @@ def update_site():
                         thread.start()
                         logging.info(f"Мониторинг сайта {url} запущен.")
                 else:
+                    # Отключаем мониторинг и обновляем статус
                     if url in monitor_threads and monitor_threads[url].is_alive():
                         monitor_flags[url].set()
                         monitor_threads[url].join()
                         del monitor_threads[url]
                         del monitor_flags[url]
-                        logging.info(f"Мониторинг сайта {url} остановлен.")
+                    # Присваиваем статус "НЕ МОНИТРИРУЕТСЯ"
+                    site_status[url] = 'NOT MONITORED'
+                    logging.info(f"Мониторинг сайта {url} остановлен.")
 
             return jsonify(success=True)
         except Exception as e:
@@ -186,18 +191,6 @@ def delete_site():
         logging.error(f"Ошибка при удалении сайта {url}: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
     
-@app.route('/fetch_statuses', methods=['GET'])
-def fetch_statuses():
-    log_function_call(fetch_statuses)
-    try:
-        sites = supabase.table('sites').select('*').execute().data
-        site_details = [{'url': site['url'], 
-                         'status': site_status.get(site['url'], 'UNKNOWN'),
-                         'last_checked': site_last_checked.get(site['url'], 'Never')} for site in sites]
-        return jsonify(success=True, sites=site_details)
-    except Exception as e:
-        logging.error(f"Ошибка при получении статусов сайтов: {e}")
-        return jsonify(success=False, message=str(e)), 500
 
 if __name__ == '__main__':
     # Проверяем, есть ли сайты с включенным мониторингом
