@@ -42,7 +42,6 @@ def check_http_site(url):
 def monitor_site(url, flag):
     global site_status, site_last_checked
     while not flag.is_set():
-        # Получаем интервал из базы данных
         site = supabase.table('sites').select('interval').eq('url', url).execute()
         if site.data:
             interval = site.data[0]['interval']
@@ -63,96 +62,124 @@ def periodic_check():
         sites = supabase.table('sites').select('*').execute().data
         for site in sites:
             url = site['url']
-            interval = site['interval']
-            if url not in monitor_threads or not monitor_threads[url].is_alive():
-                flag = threading.Event()
-                thread = threading.Thread(target=monitor_site, args=(url, flag))
-                monitor_threads[url] = thread
-                monitor_flags[url] = flag
-                thread.start()
+            enabled = site['enabled']
+            if enabled:
+                if url not in monitor_threads or not monitor_threads[url].is_alive():
+                    flag = threading.Event()
+                    thread = threading.Thread(target=monitor_site, args=(url, flag))
+                    monitor_threads[url] = thread
+                    monitor_flags[url] = flag
+                    thread.start()
+            else:
+                if url in monitor_threads and monitor_threads[url].is_alive():
+                    monitor_flags[url].set()
+                    monitor_threads[url].join()
+                    del monitor_threads[url]
+                    del monitor_flags[url]
         time.sleep(300)  # Ожидание 5 минут
 
+# Функции маршрутов
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        url = request.form['url']
-        interval = int(request.form['interval'])
+        return handle_post()
+    return render_index()
 
-        if 'authenticated' not in session:
-            flash('Пожалуйста, введите пароль для выполнения этой операции.', 'error')
-            return redirect(url_for('login'))
-
-        # Запуск мониторинга в отдельном потоке для каждого сайта
-        if url not in monitor_threads or not monitor_threads[url].is_alive():
-            flag = threading.Event()
-            thread = threading.Thread(target=monitor_site, args=(url, flag))
-            monitor_threads[url] = thread
-            monitor_flags[url] = flag
-            thread.start()
-            logging.info(f"Запущен мониторинг сайта {url} с интервалом {interval} секунд.")
-
-            # Сохранение данных в Supabase
-            data = {"url": url, "interval": interval}
-            supabase.table('sites').insert(data).execute()
-
-        return redirect(url_for('index'))
-
-    # Получение списка сайтов из Supabase
-    sites = supabase.table('sites').select('*').execute().data
-    site_details = [{'url': site['url'], 'status': site_status.get(site['url'], 'UNKNOWN'), 'last_checked': site_last_checked.get(site['url'], 'Never'), 'interval': site['interval']} for site in sites]
-    return render_template('index.html', sites=site_details)
-
-@app.route('/delete', methods=['POST'])
-def delete_site():
+def handle_post():
     url = request.form['url']
+    interval = int(request.form['interval'])
+    enabled = 'enabled' in request.form
 
     if 'authenticated' not in session:
         flash('Пожалуйста, введите пароль для выполнения этой операции.', 'error')
         return redirect(url_for('login'))
 
+    if enabled and (url not in monitor_threads or not monitor_threads[url].is_alive()):
+        flag = threading.Event()
+        thread = threading.Thread(target=monitor_site, args=(url, flag))
+        monitor_threads[url] = thread
+        monitor_flags[url] = flag
+        thread.start()
+        logging.info(f"Запущен мониторинг сайта {url} с интервалом {interval} секунд.")
+
+    data = {"url": url, "interval": interval, "enabled": enabled}
+    supabase.table('sites').insert(data).execute()
+    return redirect(url_for('index'))
+
+def render_index():
+    sites = supabase.table('sites').select('*').execute().data
+    site_details = [{'url': site['url'], 'status': site_status.get(site['url'], 'UNKNOWN'),
+                     'last_checked': site_last_checked.get(site['url'], 'Never'),
+                     'interval': site['interval'], 'enabled': site['enabled']} for site in sites]
+    return render_template('index.html', sites=site_details)
+
+@app.route('/delete', methods=['POST'])
+def delete_site():
+    url = request.form['url']
+    if 'authenticated' not in session:
+        flash('Пожалуйста, введите пароль для выполнения этой операции.', 'error')
+        return redirect(url_for('login'))
+
     if url in monitor_threads:
-        monitor_flags[url].set()  # Установить флаг для завершения потока
-        monitor_threads[url].join()  # Дождаться завершения потока
+        monitor_flags[url].set()
+        monitor_threads[url].join()
         del monitor_threads[url]
         del site_status[url]
         del site_last_checked[url]
         del monitor_flags[url]
         logging.info(f"Мониторинг сайта {url} остановлен и сайт удален.")
 
-        # Удаление данных из Supabase
+    try:
         supabase.table('sites').delete().eq('url', url).execute()
+        flash(f"Сайт {url} успешно удален.", 'success')
+    except Exception as e:
+        logging.error(f"Ошибка при удалении сайта {url}: {e}")
+        flash(f"Не удалось удалить сайт {url}.", 'error')
+
     return redirect(url_for('index'))
 
-def update_site_in_db(url, new_interval):
-    """Обновляет интервал для сайта в Supabase."""
-    supabase.table('sites').update({'interval': new_interval}).eq('url', url).execute()
+def update_site_in_db(url, new_interval=None, enabled=None):
+    update_data = {}
+    if new_interval is not None:
+        update_data['interval'] = new_interval
+    if enabled is not None:
+        update_data['enabled'] = enabled
+    if update_data:
+        try:
+            response = supabase.table('sites').update(update_data).eq('url', url).execute()
+            logging.info(f"Обновлены данные для {url}: {update_data}")
+            return response
+        except Exception as e:
+            logging.error(f"Ошибка обновления {url}: {e}")
 
 @app.route('/update', methods=['POST'])
 def update_site():
     data = request.json
     url = data.get('url')
     new_interval = data.get('interval')
+    enabled = data.get('enabled')
 
-    if url and new_interval:
-        # Обновляем интервал в базе данных
-        update_site_in_db(url, new_interval)
-        
-        # Остановка текущего потока мониторинга
-        if url in monitor_threads:
-            monitor_flags[url].set()  # Устанавливаем флаг для остановки
-            monitor_threads[url].join()  # Ждем завершения потока
-        
-        # Запуск нового потока с обновленным интервалом
-        flag = threading.Event()
-        thread = threading.Thread(target=monitor_site, args=(url, flag))
-        monitor_threads[url] = thread
-        monitor_flags[url] = flag
-        thread.start()
+    if url:
+        update_site_in_db(url, new_interval=new_interval, enabled=enabled)
 
-        app.logger.info(f"Интервал мониторинга сайта {url} обновлен до {new_interval} секунд.")
+        if enabled:
+            if url not in monitor_threads or not monitor_threads[url].is_alive():
+                flag = threading.Event()
+                thread = threading.Thread(target=monitor_site, args=(url, flag))
+                monitor_threads[url] = thread
+                monitor_flags[url] = flag
+                thread.start()
+        else:
+            if url in monitor_threads and monitor_threads[url].is_alive():
+                monitor_flags[url].set()
+                monitor_threads[url].join()
+                del monitor_threads[url]
+                del monitor_flags[url]
+
+        app.logger.info(f"Обновлены данные для {url}: интервал {new_interval}, мониторинг {'включен' if enabled else 'отключен'}.")
         return jsonify(success=True)
-    else:
-        return jsonify(success=False, message="Некорректные данные."), 400
+
+    return jsonify(success=False, message="Некорректные данные."), 400
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -173,6 +200,5 @@ def logout():
     return redirect(url_for('login'))
 
 if __name__ == '__main__':
-    # Запуск периодической проверки в отдельном потоке
     threading.Thread(target=periodic_check, daemon=True).start()
     app.run(debug=True)
