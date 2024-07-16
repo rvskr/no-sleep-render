@@ -78,7 +78,6 @@ def periodic_check():
                     del monitor_flags[url]
         time.sleep(300)  # Ожидание 5 минут
 
-# Функции маршрутов
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
@@ -138,7 +137,6 @@ def delete_site():
 
     return redirect(url_for('index'))
 
-
 def update_site_in_db(url, new_interval=None, enabled=None):
     update_data = {}
     if new_interval is not None:
@@ -149,6 +147,24 @@ def update_site_in_db(url, new_interval=None, enabled=None):
         try:
             response = supabase.table('sites').update(update_data).eq('url', url).execute()
             logging.info(f"Обновлены данные для {url}: {update_data}")
+            
+            if 'enabled' in update_data:
+                if update_data['enabled']:
+                    if url not in monitor_threads or not monitor_threads[url].is_alive():
+                        flag = threading.Event()
+                        thread = threading.Thread(target=monitor_site, args=(url, flag))
+                        monitor_threads[url] = thread
+                        monitor_flags[url] = flag
+                        thread.start()
+                        logging.info(f"Мониторинг сайта {url} запущен.")
+                else:
+                    if url in monitor_threads and monitor_threads[url].is_alive():
+                        monitor_flags[url].set()
+                        monitor_threads[url].join()
+                        del monitor_threads[url]
+                        del monitor_flags[url]
+                        logging.info(f"Мониторинг сайта {url} остановлен.")
+
             return response
         except Exception as e:
             logging.error(f"Ошибка обновления {url}: {e}")
@@ -161,23 +177,7 @@ def update_site():
     enabled = data.get('enabled')
 
     if url:
-        update_site_in_db(url, new_interval=new_interval, enabled=enabled)
-
-        if enabled:
-            if url not in monitor_threads or not monitor_threads[url].is_alive():
-                flag = threading.Event()
-                thread = threading.Thread(target=monitor_site, args=(url, flag))
-                monitor_threads[url] = thread
-                monitor_flags[url] = flag
-                thread.start()
-        else:
-            if url in monitor_threads and monitor_threads[url].is_alive():
-                monitor_flags[url].set()
-                monitor_threads[url].join()
-                del monitor_threads[url]
-                del monitor_flags[url]
-
-        app.logger.info(f"Обновлены данные для {url}: интервал {new_interval}, мониторинг {'включен' if enabled else 'отключен'}.")
+        update_site_in_db(url, new_interval=new_interval)
         return jsonify(success=True)
 
     return jsonify(success=False, message="Некорректные данные."), 400
@@ -190,20 +190,6 @@ def toggle_monitoring():
 
     if url:
         update_site_in_db(url, enabled=enabled)
-        if enabled:
-            if url not in monitor_threads or not monitor_threads[url].is_alive():
-                flag = threading.Event()
-                thread = threading.Thread(target=monitor_site, args=(url, flag))
-                monitor_threads[url] = thread
-                monitor_flags[url] = flag
-                thread.start()
-        else:
-            if url in monitor_threads and monitor_threads[url].is_alive():
-                monitor_flags[url].set()
-                monitor_threads[url].join()
-                del monitor_threads[url]
-                del monitor_flags[url]
-
         return jsonify(success=True)
 
     return jsonify(success=False, message="Некорректные данные."), 400
