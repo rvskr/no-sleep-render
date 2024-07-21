@@ -29,7 +29,7 @@ monitor_flags = {}
 site_cache = {}
 
 def log_function_call(func, *args, **kwargs):
-
+    logging.info(f"Вызов функции {func.__name__} с аргументами {args} и ключевыми аргументами {kwargs}")
     return func
 
 async def check_http_site_async(url):
@@ -70,6 +70,7 @@ def update_cache():
     try:
         sites = supabase.table('sites').select('url', 'interval', 'enabled').execute().data
         site_cache = {site['url']: site for site in sites}
+        logging.info("Кэш обновлен. Данные сайтов: %s", site_cache)
     except Exception as e:
         logging.error(f"Ошибка обновления кэша: {e}")
 
@@ -77,12 +78,20 @@ def initialize_monitors():
     global monitor_threads, monitor_flags
     for url, site_info in site_cache.items():
         if site_info['enabled']:
-            flag = threading.Event()
-            thread = threading.Thread(target=monitor_site, args=(url, flag))
-            monitor_threads[url] = thread
-            monitor_flags[url] = flag
-            thread.start()
-            logging.info(f"Запущен мониторинг сайта {url} с интервалом {site_info['interval']} секунд.")
+            if url not in monitor_threads or not monitor_threads[url].is_alive():
+                flag = threading.Event()
+                thread = threading.Thread(target=monitor_site, args=(url, flag))
+                monitor_threads[url] = thread
+                monitor_flags[url] = flag
+                thread.start()
+                logging.info(f"Запущен мониторинг сайта {url} с интервалом {site_info['interval']} секунд.")
+        else:
+            if url in monitor_threads and monitor_threads[url].is_alive():
+                monitor_flags[url].set()
+                monitor_threads[url].join()
+                del monitor_threads[url]
+                del monitor_flags[url]
+                logging.info(f"Мониторинг сайта {url} остановлен.")
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -226,7 +235,6 @@ def periodic_monitoring():
             time.sleep(60)  # Период обновления в 60 секунд
         except Exception as e:
             logging.error(f"Ошибка при периодическом мониторинге: {e}")
-
 
 if __name__ == '__main__':
     update_cache()
