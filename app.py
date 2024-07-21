@@ -7,6 +7,8 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import time
+import asyncio
+import aiohttp
 
 load_dotenv()
 
@@ -24,33 +26,34 @@ site_status = {}
 site_last_checked = {}
 monitor_threads = {}
 monitor_flags = {}
+site_cache = {}
 
 def log_function_call(func, *args, **kwargs):
-    logging.info(f"Вызов функции: {func.__name__}, параметры: args={args}, kwargs={kwargs}")
+
     return func
 
-def check_http_site(url):
-    log_function_call(check_http_site, url)
-    try:
-        response = requests.get(url, timeout=10)
-        return response.status_code == 200
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка при проверке {url}: {e}")
-        return False
+async def check_http_site_async(url):
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, timeout=10) as response:
+                return response.status == 200
+        except Exception as e:
+            logging.error(f"Ошибка при проверке {url}: {e}")
+            return False
 
 def monitor_site(url, flag):
     log_function_call(monitor_site, url, flag)
-    global site_status, site_last_checked
+    global site_status, site_last_checked, site_cache
     while not flag.is_set():
-        site = supabase.table('sites').select('interval').eq('url', url).execute()
-        if site.data:
-            interval = site.data[0]['interval']
+        site_info = site_cache.get(url, None)
+        if site_info:
+            interval = site_info.get('interval')
         else:
-            logging.error(f"Не удалось найти интервал для {url} в базе данных.")
+            logging.error(f"Не удалось найти интервал для {url} в кэше.")
             break
 
         start_time = time.time()
-        status = check_http_site(url)
+        status = asyncio.run(check_http_site_async(url))
         site_status[url] = 'UP' if status else 'DOWN'
         site_last_checked[url] = datetime.now(timezone.utc)
         end_time = time.time()
@@ -61,6 +64,25 @@ def monitor_site(url, flag):
         time_to_wait = max(0, interval - time_taken)
         logging.info(f"Следующая проверка сайта {url} через {time_to_wait:.2f} секунд.")
         flag.wait(time_to_wait)
+
+def update_cache():
+    global site_cache
+    try:
+        sites = supabase.table('sites').select('url', 'interval', 'enabled').execute().data
+        site_cache = {site['url']: site for site in sites}
+    except Exception as e:
+        logging.error(f"Ошибка обновления кэша: {e}")
+
+def initialize_monitors():
+    global monitor_threads, monitor_flags
+    for url, site_info in site_cache.items():
+        if site_info['enabled']:
+            flag = threading.Event()
+            thread = threading.Thread(target=monitor_site, args=(url, flag))
+            monitor_threads[url] = thread
+            monitor_flags[url] = flag
+            thread.start()
+            logging.info(f"Запущен мониторинг сайта {url} с интервалом {site_info['interval']} секунд.")
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -73,14 +95,15 @@ def handle_post():
     log_function_call(handle_post)
     url = request.form['url']
     interval = int(request.form['interval'])
-    enabled = 'enabled' in request.form  # Проверка состояния чекбокса
+    enabled = 'enabled' in request.form
 
     if 'authenticated' not in session:
         flash('Пожалуйста, введите пароль для выполнения этой операции.', 'error')
         return redirect(url_for('login'))
 
-    data = {"url": url, "interval": interval, "enabled": enabled}  # Добавляем enabled в данные
+    data = {"url": url, "interval": interval, "enabled": enabled}
     supabase.table('sites').insert(data).execute()
+    update_cache()
 
     if enabled:
         flag = threading.Event()
@@ -92,10 +115,9 @@ def handle_post():
 
     return redirect(url_for('index'))
 
-
 def render_index():
     log_function_call(render_index)
-    sites = supabase.table('sites').select('*').execute().data
+    sites = list(site_cache.values())
     site_details = [{'url': site['url'],
                      'status': site_status.get(site['url'], 'NOT MONITORED'),
                      'last_checked': site_last_checked.get(site['url'], 'Never'),
@@ -120,6 +142,7 @@ def update_site():
     if update_data:
         try:
             supabase.table('sites').update(update_data).eq('url', url).execute()
+            update_cache()
             logging.info(f"Обновлены данные для {url}: {update_data}")
 
             if 'enabled' in update_data:
@@ -132,13 +155,11 @@ def update_site():
                         thread.start()
                         logging.info(f"Мониторинг сайта {url} запущен.")
                 else:
-                    # Отключаем мониторинг и обновляем статус
                     if url in monitor_threads and monitor_threads[url].is_alive():
                         monitor_flags[url].set()
                         monitor_threads[url].join()
                         del monitor_threads[url]
                         del monitor_flags[url]
-                    # Присваиваем статус "НЕ МОНИТРИРУЕТСЯ"
                     site_status[url] = 'NOT MONITORED'
                     logging.info(f"Мониторинг сайта {url} остановлен.")
 
@@ -183,6 +204,8 @@ def delete_site():
                 monitor_threads[url].join()
                 del monitor_threads[url]
                 del monitor_flags[url]
+            site_status[url] = 'NOT MONITORED'
+            update_cache()
             return jsonify({'success': True})
         else:
             logging.error(f"Не удалось удалить сайт {url}, возможно, он не найден.")
@@ -190,18 +213,24 @@ def delete_site():
     except Exception as e:
         logging.error(f"Ошибка при удалении сайта {url}: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
-    
+
+def periodic_monitoring():
+    while True:
+        try:
+            update_cache()
+            for site in site_cache.values():
+                if site['enabled']:
+                    status = asyncio.run(check_http_site_async(site['url']))
+                    site_status[site['url']] = 'UP' if status else 'DOWN'
+                    site_last_checked[site['url']] = datetime.now(timezone.utc)
+            time.sleep(60)  # Период обновления в 60 секунд
+        except Exception as e:
+            logging.error(f"Ошибка при периодическом мониторинге: {e}")
+
 
 if __name__ == '__main__':
-    # Проверяем, есть ли сайты с включенным мониторингом
-    sites = supabase.table('sites').select('url', 'interval', 'enabled').execute().data
-    for site in sites:
-        if site['enabled']:
-            flag = threading.Event()
-            thread = threading.Thread(target=monitor_site, args=(site['url'], flag))
-            monitor_threads[site['url']] = thread
-            monitor_flags[site['url']] = flag
-            thread.start()
-            logging.info(f"Запущен мониторинг сайта {site['url']} с интервалом {site['interval']} секунд.")
-    
+    update_cache()
+    initialize_monitors()  # Запуск мониторинга для сайтов из базы данных
+    monitoring_thread = threading.Thread(target=periodic_monitoring)
+    monitoring_thread.start()
     app.run(debug=False)
